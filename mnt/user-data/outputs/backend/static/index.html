@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Ticket Triage — AI Support Classifier</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0b0c0f;
+    --surface:   #111318;
+    --border:    #1e2028;
+    --border2:   #2a2d38;
+    --text:      #dde0ec;
+    --muted:     #5a5e72;
+    --accent:    #e8ff47;
+    --accent2:   #00d4ff;
+    --red:       #ff4d6a;
+    --orange:    #ff8c42;
+    --green:     #39e8a0;
+    --purple:    #b07fff;
+    --mono:      'DM Mono', monospace;
+    --sans:      'DM Sans', sans-serif;
+    --display:   'Bebas Neue', sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Noise texture overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.4;
+  }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+  }
+
+  /* ── Sidebar ── */
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .logo {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .logo-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  .logo-title {
+    font-family: var(--display);
+    font-size: 30px;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .logo-title span { color: var(--accent); }
+
+  .nav-section label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    transition: all 0.15s;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 2px;
+  }
+
+  .nav-btn:hover { background: var(--border); color: var(--text); }
+  .nav-btn.active { background: rgba(232, 255, 71, 0.08); color: var(--accent); }
+  .nav-btn .icon { font-size: 15px; width: 20px; text-align: center; }
+
+  .sidebar-stats {
+    margin-top: auto;
+    padding: 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .stat-row span:first-child {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .stat-row span:last-child {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  /* ── Main ── */
+  main {
+    padding: 40px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    max-width: 900px;
+  }
+
+  .page { display: none; }
+  .page.active { display: flex; flex-direction: column; gap: 28px; }
+
+  /* ── Page Header ── */
+  .page-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+  }
+
+  .page-header h1 {
+    font-family: var(--display);
+    font-size: 42px;
+    letter-spacing: 0.04em;
+    line-height: 1;
+  }
+
+  .page-header p {
+    font-size: 14px;
+    color: var(--muted);
+    font-weight: 300;
+  }
+
+  /* ── Classify form ── */
+  .classify-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .card-header span {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .card-body { padding: 24px; }
+
+  textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 16px;
+    resize: vertical;
+    min-height: 120px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--muted); }
+
+  .form-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 16px;
+  }
+
+  .char-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .char-count.warn { color: var(--orange); }
+
+  .btn-analyze {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--accent);
+    color: #0b0c0f;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.02em;
+  }
+
+  .btn-analyze:hover { background: #d4eb00; transform: translateY(-1px); }
+  .btn-analyze:active { transform: translateY(0); }
+  .btn-analyze:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ── Result card ── */
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    animation: slideIn 0.3s ease;
+    display: none;
+  }
+
+  .result-card.visible { display: block; }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .result-cell {
+    background: var(--surface);
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .result-cell label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .result-value {
+    font-family: var(--display);
+    font-size: 26px;
+    letter-spacing: 0.05em;
+    line-height: 1;
+  }
+
+  .result-value.billing    { color: var(--purple); }
+  .result-value.technical  { color: var(--accent2); }
+  .result-value.account    { color: var(--orange); }
+  .result-value.general    { color: var(--green); }
+  .result-value.high       { color: var(--red); }
+  .result-value.medium     { color: var(--orange); }
+  .result-value.low        { color: var(--green); }
+
+  .conf-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .conf-bar {
+    flex: 1;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .conf-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    background: var(--accent);
+  }
+
+  .conf-pct {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    width: 38px;
+    text-align: right;
+  }
+
+  .result-action {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .result-action .action-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .result-action .action-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .ticket-id-badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(232, 255, 71, 0.08);
+    border: 1px solid rgba(232, 255, 71, 0.2);
+    padding: 4px 10px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  /* ── Loading spinner ── */
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(11,12,15,0.3);
+    border-top-color: #0b0c0f;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Error banner ── */
+  .error-banner {
+    background: rgba(255, 77, 106, 0.08);
+    border: 1px solid rgba(255, 77, 106, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--red);
+    display: none;
+    font-family: var(--mono);
+  }
+
+  /* ── History table ── */
+  .table-wrap {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead tr {
+    border-bottom: 1px solid var(--border);
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 14px 20px;
+    text-align: left;
+    font-weight: 400;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+  tbody td {
+    padding: 14px 20px;
+    color: var(--text);
+    font-weight: 300;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .pill.Billing    { background: rgba(176,127,255,0.12); color: var(--purple); }
+  .pill.Technical  { background: rgba(0,212,255,0.1);    color: var(--accent2);}
+  .pill.Account    { background: rgba(255,140,66,0.1);   color: var(--orange); }
+  .pill.General    { background: rgba(57,232,160,0.1);   color: var(--green);  }
+  .pill.High       { background: rgba(255,77,106,0.1);   color: var(--red);    }
+  .pill.Medium     { background: rgba(255,140,66,0.1);   color: var(--orange); }
+  .pill.Low        { background: rgba(57,232,160,0.1);   color: var(--green);  }
+
+  .ticket-text-cell {
+    max-width: 320px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--muted);
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ── Stats page ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .stat-card .s-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .stat-card .s-value {
+    font-family: var(--display);
+    font-size: 44px;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--accent);
+  }
+
+  .breakdown-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .breakdown-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+  }
+
+  .breakdown-card h3 {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  .breakdown-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .breakdown-row span:first-child {
+    font-size: 12px;
+    width: 130px;
+    flex-shrink: 0;
+  }
+
+  .bd-bar-wrap { flex: 1; height: 6px; background: var(--border2); border-radius: 3px; overflow: hidden; }
+  .bd-bar-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+  .breakdown-row .bd-count { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 30px; text-align: right; }
+
+  /* ── Filter bar ── */
+  .filter-bar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .filter-select {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 8px 12px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .btn-refresh {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-refresh:hover { border-color: var(--accent); color: var(--accent); }
+
+  @media (max-width: 768px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { display: none; }
+    main { padding: 20px; }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .breakdown-grid { grid-template-columns: 1fr; }
+    .result-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <aside>
+    <div class="logo">
+      <span class="logo-tag">// AI-powered</span>
+      <div class="logo-title">TICKET<span>TRIAGE</span></div>
+    </div>
+
+    <nav class="nav-section">
+      <label>Navigation</label>
+      <button class="nav-btn active" onclick="showPage('classify', this)">
+        <span class="icon">⚡</span> Classify Ticket
+      </button>
+      <button class="nav-btn" onclick="showPage('history', this)">
+        <span class="icon">📋</span> Ticket History
+      </button>
+      <button class="nav-btn" onclick="showPage('stats', this)">
+        <span class="icon">📊</span> Analytics
+      </button>
+    </nav>
+
+    <div class="sidebar-stats" id="sidebarStats">
+      <div class="stat-row">
+        <span>Total Tickets</span>
+        <span id="statTotal">—</span>
+      </div>
+      <div class="stat-row">
+        <span>High Priority</span>
+        <span id="statHigh" style="color: var(--red)">—</span>
+      </div>
+      <div class="stat-row">
+        <span>Medium</span>
+        <span id="statMedium" style="color: var(--orange)">—</span>
+      </div>
+      <div class="stat-row">
+        <span>Low</span>
+        <span id="statLow" style="color: var(--green)">—</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main>
+
+    <!-- ── Classify Page ── -->
+    <div class="page active" id="page-classify">
+      <div class="page-header">
+        <h1>Classify Ticket</h1>
+        <p>Submit a support ticket to get instant AI classification and priority routing.</p>
+      </div>
+
+      <div class="classify-card">
+        <div class="card-header">
+          <div class="dot"></div>
+          <span>Live Classification Engine</span>
+        </div>
+        <div class="card-body">
+          <textarea id="ticketInput" placeholder="Paste or type the customer support ticket here…" maxlength="2000" oninput="updateCharCount()"></textarea>
+          <div class="form-footer">
+            <span class="char-count" id="charCount">0 / 2000</span>
+            <button class="btn-analyze" id="analyzeBtn" onclick="classify()">
+              <span id="btnText">Analyze Ticket</span>
+              <div class="spinner" id="spinner"></div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="error-banner" id="errorBanner"></div>
+
+      <div class="result-card" id="resultCard">
+        <div class="card-header">
+          <span>Prediction Result</span>
+        </div>
+        <div class="result-grid">
+          <div class="result-cell">
+            <label>Category</label>
+            <div class="result-value" id="rCategory">—</div>
+            <div class="conf-bar-wrap">
+              <div class="conf-bar"><div class="conf-bar-fill" id="catBarFill" style="width:0%"></div></div>
+              <span class="conf-pct" id="catConf">—</span>
+            </div>
+          </div>
+          <div class="result-cell">
+            <label>Priority Level</label>
+            <div class="result-value" id="rPriority">—</div>
+            <div class="conf-bar-wrap">
+              <div class="conf-bar"><div class="conf-bar-fill" id="priBarFill" style="width:0%"></div></div>
+              <span class="conf-pct" id="priConf">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="result-action">
+          <span class="action-label">Recommended&nbsp;Action</span>
+          <span class="action-text" id="rAction">—</span>
+          <span class="ticket-id-badge" id="rTicketId">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── History Page ── -->
+    <div class="page" id="page-history">
+      <div class="page-header">
+        <h1>Ticket History</h1>
+        <p>All classified tickets stored in the database, newest first.</p>
+      </div>
+      <div class="filter-bar">
+        <select class="filter-select" id="filterPriority" onchange="loadHistory()">
+          <option value="">All Priorities</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+        <select class="filter-select" id="filterCategory" onchange="loadHistory()">
+          <option value="">All Categories</option>
+          <option value="Billing">Billing</option>
+          <option value="Technical Issue">Technical Issue</option>
+          <option value="Account">Account</option>
+          <option value="General Query">General Query</option>
+        </select>
+        <button class="btn-refresh" onclick="loadHistory()">↻ Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticket ID</th>
+              <th>Text</th>
+              <th>Category</th>
+              <th>Priority</th>
+              <th>Submitted</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr><td colspan="5"><div class="empty-state">No tickets yet.</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Stats Page ── -->
+    <div class="page" id="page-stats">
+      <div class="page-header">
+        <h1>Analytics</h1>
+        <p>Real-time breakdown of classified support tickets.</p>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="s-label">Total Tickets</span>
+          <div class="s-value" id="statBigTotal">0</div>
+        </div>
+        <div class="stat-card">
+          <span class="s-label">High Priority</span>
+          <div class="s-value" id="statBigHigh" style="color: var(--red)">0</div>
+        </div>
+        <div class="stat-card">
+          <span class="s-label">Categories</span>
+          <div class="s-value" id="statBigCats" style="color: var(--accent2)">0</div>
+        </div>
+      </div>
+      <div class="breakdown-grid">
+        <div class="breakdown-card">
+          <h3>By Category</h3>
+          <div id="catBreakdown"></div>
+        </div>
+        <div class="breakdown-card">
+          <h3>By Priority</h3>
+          <div id="priBreakdown"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const API = '';  // same origin
+
+// ── Nav ──────────────────────────────────────────────
+function showPage(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'history') loadHistory();
+  if (name === 'stats')   loadStats();
+}
+
+// ── Char count ──────────────────────────────────────
+function updateCharCount() {
+  const v = document.getElementById('ticketInput').value.length;
+  const el = document.getElementById('charCount');
+  el.textContent = v + ' / 2000';
+  el.classList.toggle('warn', v > 1800);
+}
+
+// ── Classify ────────────────────────────────────────
+async function classify() {
+  const text = document.getElementById('ticketInput').value.trim();
+  const btn  = document.getElementById('analyzeBtn');
+  const spinner = document.getElementById('spinner');
+  const btnText = document.getElementById('btnText');
+  const errBanner = document.getElementById('errorBanner');
+  const resultCard = document.getElementById('resultCard');
+
+  errBanner.style.display = 'none';
+
+  if (!text) {
+    showError('Please enter a support ticket before analyzing.');
+    return;
+  }
+
+  // Loading state
+  btn.disabled = true;
+  spinner.style.display = 'block';
+  btnText.textContent = 'Analyzing…';
+  resultCard.classList.remove('visible');
+
+  try {
+    const res = await fetch(API + '/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      showError(data.error || 'Classification failed.');
+      return;
+    }
+
+    renderResult(data.ticket);
+    loadSidebarStats();
+
+  } catch (e) {
+    showError('Could not reach the server. Make sure the backend is running.');
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    btnText.textContent = 'Analyze Ticket';
+  }
+}
+
+function renderResult(t) {
+  const catEl = document.getElementById('rCategory');
+  const priEl = document.getElementById('rPriority');
+
+  catEl.textContent = t.category;
+  priEl.textContent = t.priority;
+
+  // Color classes
+  const catClass = { 'Billing': 'billing', 'Technical Issue': 'technical', 'Account': 'account', 'General Query': 'general' };
+  const priClass  = { 'High': 'high', 'Medium': 'medium', 'Low': 'low' };
+  catEl.className = 'result-value ' + (catClass[t.category] || '');
+  priEl.className = 'result-value ' + (priClass[t.priority] || '');
+
+  // Confidence bars
+  document.getElementById('catBarFill').style.width = t.category_confidence + '%';
+  document.getElementById('priBarFill').style.width = t.priority_confidence + '%';
+  document.getElementById('catConf').textContent = t.category_confidence + '%';
+  document.getElementById('priConf').textContent = t.priority_confidence + '%';
+
+  document.getElementById('rAction').textContent = t.recommended_action;
+  document.getElementById('rTicketId').textContent = '#' + t.id;
+
+  document.getElementById('resultCard').classList.add('visible');
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorBanner');
+  el.textContent = '⚠ ' + msg;
+  el.style.display = 'block';
+}
+
+// ── History ─────────────────────────────────────────
+async function loadHistory() {
+  const priority = document.getElementById('filterPriority').value;
+  const category = document.getElementById('filterCategory').value;
+  let url = API + '/api/tickets?limit=100';
+  if (priority) url += '&priority=' + encodeURIComponent(priority);
+  if (category) url += '&category=' + encodeURIComponent(category);
+
+  try {
+    const res  = await fetch(url);
+    const data = await res.json();
+    renderHistory(data.tickets || []);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function renderHistory(tickets) {
+  const tbody = document.getElementById('historyBody');
+  if (!tickets.length) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state">No tickets found.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = tickets.map(t => {
+    const catKey = t.category.replace(' ', '').replace('Issue','').replace('Query','');
+    const date = new Date(t.created_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    return `
+      <tr>
+        <td><span style="font-family:var(--mono);font-size:11px;color:var(--accent)">#${t.id}</span></td>
+        <td><div class="ticket-text-cell">${escHtml(t.text)}</div></td>
+        <td><span class="pill ${catKey}">${t.category}</span></td>
+        <td><span class="pill ${t.priority}">${t.priority}</span></td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${date}</td>
+      </tr>`;
+  }).join('');
+}
+
+// ── Stats ────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const res  = await fetch(API + '/api/summary');
+    const data = await res.json();
+    renderStats(data);
+  } catch (e) { console.error(e); }
+}
+
+function renderStats(data) {
+  document.getElementById('statBigTotal').textContent = data.total_tickets || 0;
+  document.getElementById('statBigHigh').textContent  = data.by_priority?.High || 0;
+  document.getElementById('statBigCats').textContent  = Object.keys(data.by_category || {}).length;
+
+  // Category breakdown
+  const catColors = { 'Billing':'var(--purple)','Technical Issue':'var(--accent2)','Account':'var(--orange)','General Query':'var(--green)' };
+  const total = data.total_tickets || 1;
+  document.getElementById('catBreakdown').innerHTML = Object.entries(data.by_category || {}).map(([cat, cnt]) => `
+    <div class="breakdown-row">
+      <span>${cat}</span>
+      <div class="bd-bar-wrap"><div class="bd-bar-fill" style="width:${Math.round(cnt/total*100)}%;background:${catColors[cat]||'var(--accent)'}"></div></div>
+      <span class="bd-count">${cnt}</span>
+    </div>`).join('') || '<div style="color:var(--muted);font-size:12px">No data yet.</div>';
+
+  const priColors = { 'High':'var(--red)', 'Medium':'var(--orange)', 'Low':'var(--green)' };
+  document.getElementById('priBreakdown').innerHTML = Object.entries(data.by_priority || {}).map(([pri, cnt]) => `
+    <div class="breakdown-row">
+      <span>${pri}</span>
+      <div class="bd-bar-wrap"><div class="bd-bar-fill" style="width:${Math.round(cnt/total*100)}%;background:${priColors[pri]||'var(--accent)'}"></div></div>
+      <span class="bd-count">${cnt}</span>
+    </div>`).join('') || '<div style="color:var(--muted);font-size:12px">No data yet.</div>';
+}
+
+// ── Sidebar stats ────────────────────────────────────
+async function loadSidebarStats() {
+  try {
+    const res  = await fetch(API + '/api/summary');
+    const data = await res.json();
+    document.getElementById('statTotal').textContent  = data.total_tickets || 0;
+    document.getElementById('statHigh').textContent   = data.by_priority?.High   || 0;
+    document.getElementById('statMedium').textContent = data.by_priority?.Medium || 0;
+    document.getElementById('statLow').textContent    = data.by_priority?.Low    || 0;
+  } catch (e) {}
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Enter key shortcut
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') classify();
+});
+
+// Init
+loadSidebarStats();
+</script>
+</body>
+</html>
